@@ -54,9 +54,17 @@ def test_parse_frontmatter_missing_or_broken(tmp_path):
 def test_cwd_matches():
     assert ccmem._cwd_matches("/a/b", "/a/b")
     assert ccmem._cwd_matches("/a/b/c", "/a/b")   # memory 在 query 子目录
-    assert ccmem._cwd_matches("/a/b", "/a/b/c")   # query 在 memory 子目录
+    assert not ccmem._cwd_matches("/a/b", "/a/b/c")  # 祖先目录的记录不泄漏进子项目
     assert not ccmem._cwd_matches("/a/bc", "/a/b")  # 前缀但不是路径边界
     assert not ccmem._cwd_matches("", "/a/b")
+
+
+def test_strip_frontmatter():
+    text = "---\ncwd: /a/skill checkup\n---\n\n## 轮次 1\n**用户**：修 bug\n"
+    body = ccmem._strip_frontmatter(text)
+    assert "skill checkup" not in body   # frontmatter 元数据不进搜索范围
+    assert "修 bug" in body
+    assert ccmem._strip_frontmatter("# 无 frontmatter\n") == "# 无 frontmatter\n"
 
 
 def test_split_and_filter_sections():

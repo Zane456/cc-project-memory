@@ -16,7 +16,8 @@
 
 cwd 匹配规则（用于 here / --here / find / last-session）：
   · 严格相等
-  · 一方是另一方的子目录（项目内任意位置都算"在这个项目里"）
+  · 记忆的 cwd 在查询目录之下（项目子目录里聊的也算这个项目）
+  · 祖先目录的记录不算命中（防 home / 伞目录的 session 泄漏进所有子项目）
   · 路径在比较前会 expand + resolve 软链接
 
 环境变量：
@@ -138,8 +139,10 @@ def _normalize_path(p: str) -> str:
 
 
 def _cwd_matches(memory_cwd: str, query_cwd: str) -> bool:
-    """记忆的 cwd 与查询 cwd 是否属于"同一项目"——
-    相等 / memory 是 query 的子目录 / query 是 memory 的子目录 都算命中。"""
+    """记忆的 cwd 是否属于查询目录（当前项目）——
+    相等 / memory 是 query 的子目录 算命中。
+    祖先方向（query 在 memory 之下）不算：home / 伞目录里记录的 session
+    会命中其下所有子项目，"上个 session"被无关记录抢走。"""
     if not memory_cwd or not query_cwd:
         return False
     m = _normalize_path(memory_cwd)
@@ -148,12 +151,17 @@ def _cwd_matches(memory_cwd: str, query_cwd: str) -> bool:
         return False
     if m == q:
         return True
-    sep = os.sep
-    if m.startswith(q + sep):
-        return True
-    if q.startswith(m + sep):
-        return True
-    return False
+    return m.startswith(q + os.sep)
+
+
+def _strip_frontmatter(text: str) -> str:
+    """去掉开头的 --- frontmatter 块，返回正文。没有 frontmatter 就原样返回。"""
+    if not text.startswith("---"):
+        return text
+    end = text.find("\n---", 3)
+    if end < 0:
+        return text
+    return text[end + 4:]
 
 
 _SECTION_HEADER_RE = re.compile(r"^##\s*轮次\s+\d+[^\n]*$", re.M)
@@ -765,7 +773,9 @@ def cmd_find(args: argparse.Namespace) -> int:
             text = p.read_text(encoding="utf-8")
         except Exception:
             continue
-        if pattern.search(text):
+        # 只搜正文：frontmatter 里的 cwd 路径等元数据会撞关键词（如项目名），
+        # 产生零信息假阳性
+        if pattern.search(_strip_frontmatter(text)):
             pairs.append((p, fm, text))
 
     if not pairs:
@@ -846,8 +856,8 @@ def cmd_find(args: argparse.Namespace) -> int:
                 if preamble.strip():
                     write(preamble.rstrip())
                 if kept_sec == 0:
-                    # frontmatter 命中但没有具体轮次命中（罕见）
-                    write(f"(关键词只在 frontmatter / preamble 命中，无轮次段命中)")
+                    # 正文引言命中但没有具体轮次命中（罕见）
+                    write(f"(关键词只在 preamble 命中，无轮次段命中)")
                 else:
                     write(f"[显示 {kept_sec}/{total_sec} 个命中关键词的轮次段]")
                     for h, b in matched:
